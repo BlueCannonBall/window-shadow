@@ -1071,7 +1071,14 @@ int main(int argc, char** argv) {
         case MapNotify: handle_map(&ev.xmap); break;
         case UnmapNotify: handle_unmap(&ev.xunmap); break;
         case DestroyNotify: handle_destroy(&ev.xdestroywindow); break;
-        case ConfigureNotify: handle_configure(&ev.xconfigure); break;
+        case ConfigureNotify: 
+            /* Compress ConfigureNotify events to prevent the shadow from trailing behind 
+             * when resizing, which generates hundreds of intermediate events per second. */
+            while (XCheckTypedWindowEvent(dpy, ev.xconfigure.window, ConfigureNotify, &ev)) {
+                // ev is updated with the newest event from the queue
+            }
+            handle_configure(&ev.xconfigure); 
+            break;
         case ReparentNotify: handle_reparent(&ev.xreparent); break;
         case PropertyNotify:
             handle_property(&ev.xproperty);
