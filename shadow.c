@@ -789,14 +789,11 @@ static void handle_configure(XConfigureEvent* ev) {
         return;
     }
 
-    /* Use the event coordinates directly. 
-     * Since we only listen for StructureNotify on the toplevel (which is a direct 
-     * child of the root window), ev->x and ev->y are already absolute coordinates! 
-     * This avoids two highly expensive synchronous X11 round-trips per frame. */
-    int ax = ev->x;
-    int ay = ev->y;
-    int aw = ev->width;
-    int ah = ev->height;
+    /* Get absolute coordinates via XTranslateCoordinates. 
+     * This synchronous call implicitly throttles the event loop and fetches the 
+     * most up-to-date window dimensions, safely compressing resize events. */
+    int ax, ay, aw, ah;
+    get_absolute_geometry(ev->window, &ax, &ay, &aw, &ah);
 
     int resized = (aw != e->w || ah != e->h);
 
@@ -1071,14 +1068,7 @@ int main(int argc, char** argv) {
         case MapNotify: handle_map(&ev.xmap); break;
         case UnmapNotify: handle_unmap(&ev.xunmap); break;
         case DestroyNotify: handle_destroy(&ev.xdestroywindow); break;
-        case ConfigureNotify: 
-            /* Compress ConfigureNotify events to prevent the shadow from trailing behind 
-             * when resizing, which generates hundreds of intermediate events per second. */
-            while (XCheckTypedWindowEvent(dpy, ev.xconfigure.window, ConfigureNotify, &ev)) {
-                // ev is updated with the newest event from the queue
-            }
-            handle_configure(&ev.xconfigure); 
-            break;
+        case ConfigureNotify: handle_configure(&ev.xconfigure); break;
         case ReparentNotify: handle_reparent(&ev.xreparent); break;
         case PropertyNotify:
             handle_property(&ev.xproperty);
