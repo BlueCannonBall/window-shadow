@@ -67,7 +67,9 @@ static Colormap argb_cmap;
 static ShadowEntry* shadow_list;
 static volatile int running = 1;
 
-static void get_workarea(int* wx, int* wy, int* ww, int* wh) {
+static int cached_wx = 0, cached_wy = 0, cached_ww = 0, cached_wh = 0;
+
+static void update_workarea_cache(void) {
     Atom actual_type;
     int actual_format;
     unsigned long nitems, bytes_after;
@@ -75,17 +77,24 @@ static void get_workarea(int* wx, int* wy, int* ww, int* wh) {
 
     if (XGetWindowProperty(dpy, root, XInternAtom(dpy, "_NET_WORKAREA", False), 0, 4, False, XA_CARDINAL, &actual_type, &actual_format, &nitems, &bytes_after, &data) == Success && data) {
         long* wa = (long*) data;
-        *wx = wa[0];
-        *wy = wa[1];
-        *ww = wa[2];
-        *wh = wa[3];
+        cached_wx = wa[0];
+        cached_wy = wa[1];
+        cached_ww = wa[2];
+        cached_wh = wa[3];
         XFree(data);
     } else {
-        *wx = 0;
-        *wy = 0;
-        *ww = screen_w;
-        *wh = screen_h;
+        cached_wx = 0;
+        cached_wy = 0;
+        cached_ww = screen_w;
+        cached_wh = screen_h;
     }
+}
+
+static void get_workarea(int* wx, int* wy, int* ww, int* wh) {
+    *wx = cached_wx;
+    *wy = cached_wy;
+    *ww = cached_ww;
+    *wh = cached_wh;
 }
 
 /* Atoms */
@@ -107,6 +116,7 @@ static Atom A_NET_WM_WINDOW_TYPE_UTILITY;
 static Atom A_SHADOW_WINDOW;
 static Atom A_NET_RESTACK_WINDOW;
 static Atom A_NET_ACTIVE_WINDOW;
+static Atom A_NET_WORKAREA;
 
 static int cfg_debug = 0;
 
@@ -1010,6 +1020,10 @@ int main(int argc, char** argv) {
     A_SHADOW_WINDOW = XInternAtom(dpy, "_SHADOW_WINDOW", False);
     A_NET_RESTACK_WINDOW = XInternAtom(dpy, "_NET_RESTACK_WINDOW", False);
     A_NET_ACTIVE_WINDOW = XInternAtom(dpy, "_NET_ACTIVE_WINDOW", False);
+    A_NET_WORKAREA = XInternAtom(dpy, "_NET_WORKAREA", False);
+
+    /* Initialize workarea cache */
+    update_workarea_cache();
 
     /* Listen for substructure events on root */
     XSelectInput(dpy, root, SubstructureNotifyMask | PropertyChangeMask);
@@ -1040,10 +1054,11 @@ int main(int argc, char** argv) {
         case ReparentNotify: handle_reparent(&ev.xreparent); break;
         case PropertyNotify:
             handle_property(&ev.xproperty);
-            /* Check if active window changed */
-            if (ev.xproperty.window == root &&
-                ev.xproperty.atom == A_NET_ACTIVE_WINDOW) {
-                /* Get the currently active window */
+            if (ev.xproperty.window == root) {
+                if (ev.xproperty.atom == A_NET_WORKAREA) {
+                    update_workarea_cache();
+                } else if (ev.xproperty.atom == A_NET_ACTIVE_WINDOW) {
+                    /* Get the currently active window */
                 unsigned long nitems = 0;
                 unsigned char* data = get_prop(root, A_NET_ACTIVE_WINDOW, XA_WINDOW, NULL, &nitems);
                 Window active = None;
@@ -1070,6 +1085,7 @@ int main(int argc, char** argv) {
                             XClearWindow(dpy, e->shadow);
                         }
                     }
+                }
                 }
             }
             break;
