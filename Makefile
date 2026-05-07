@@ -17,3 +17,4 @@ clean:
 
 install: $(TARGET)
 	install -Dm755 $(TARGET) $(DESTDIR)/usr/local/bin/$(TARGET)
+	install -Dm644 window-shadow.service $(DESTDIR)/usr/lib/systemd/user/window-shadow.service
