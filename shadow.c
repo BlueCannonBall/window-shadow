@@ -789,9 +789,14 @@ static void handle_configure(XConfigureEvent* ev) {
         return;
     }
 
-    /* Get absolute coordinates via XTranslateCoordinates */
-    int ax, ay, aw, ah;
-    get_absolute_geometry(ev->window, &ax, &ay, &aw, &ah);
+    /* Use the event coordinates directly. 
+     * Since we only listen for StructureNotify on the toplevel (which is a direct 
+     * child of the root window), ev->x and ev->y are already absolute coordinates! 
+     * This avoids two highly expensive synchronous X11 round-trips per frame. */
+    int ax = ev->x;
+    int ay = ev->y;
+    int aw = ev->width;
+    int ah = ev->height;
 
     int resized = (aw != e->w || ah != e->h);
 
