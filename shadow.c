@@ -47,6 +47,12 @@ typedef struct ShadowEntry {
     int x, y, w, h;  /* toplevel geometry */
     int sw, sh;      /* shadow window size */
     int is_active;   /* focus state */
+    
+    /* Cache for full, un-clamped shadow surface */
+    cairo_surface_t* full_shadow;
+    uint32_t* full_shadow_data;
+    int last_w, last_h, last_active;
+    
     struct ShadowEntry* next;
 } ShadowEntry;
 
@@ -108,7 +114,7 @@ static int cfg_radius = 60;
 static float cfg_opacity = 0.8f;
 static float cfg_inactive_opacity = 0.4f;
 static int cfg_offset_x = 0;
-static int cfg_offset_y = 12;
+static int cfg_offset_y = 8;
 static float cfg_color_r = 0.0f;
 static float cfg_color_g = 0.0f;
 static float cfg_color_b = 0.0f;
@@ -267,52 +273,65 @@ static void render_shadow(ShadowEntry* e, int tw, int th) {
 
     int npx = sw * sh;
 
-    /* Build alpha mask: solid rectangle where the window is */
-    unsigned char* alpha = calloc(npx, 1);
-    if (!alpha) return;
+    if (e->full_shadow && (e->last_w != tw || e->last_h != th || e->last_active != e->is_active)) {
+        cairo_surface_destroy(e->full_shadow);
+        free(e->full_shadow_data);
+        e->full_shadow = NULL;
+        e->full_shadow_data = NULL;
+    }
 
-    for (int y = cfg_radius; y < cfg_radius + th; y++)
-        for (int x = cfg_radius; x < cfg_radius + tw; x++)
-            alpha[y * sw + x] = 255;
+    if (!e->full_shadow) {
+        /* Build alpha mask: solid rectangle where the window is */
+        unsigned char* alpha = calloc(npx, 1);
+        if (!alpha) return;
 
-    gaussian_blur(alpha, sw, sh, cfg_radius);
+        for (int y = cfg_radius; y < cfg_radius + th; y++)
+            for (int x = cfg_radius; x < cfg_radius + tw; x++)
+                alpha[y * sw + x] = 255;
 
-    int cx0 = cfg_radius - cfg_offset_x;
-    int cy0 = cfg_radius - cfg_offset_y;
+        gaussian_blur(alpha, sw, sh, cfg_radius);
 
-    /* Clear the center (alpha=0) where the target window sits */
-    for (int y = cy0; y < cy0 + th; y++)
-        for (int x = cx0; x < cx0 + tw; x++)
-            if (x >= 0 && x < sw && y >= 0 && y < sh)
-                alpha[y * sw + x] = 0;
+        int cx0 = cfg_radius - cfg_offset_x;
+        int cy0 = cfg_radius - cfg_offset_y;
 
-    /* Convert to premultiplied ARGB */
-    uint32_t* argb = calloc(npx, sizeof(uint32_t));
-    if (!argb) {
+        /* Clear the center (alpha=0) where the target window sits */
+        for (int y = cy0; y < cy0 + th; y++)
+            for (int x = cx0; x < cx0 + tw; x++)
+                if (x >= 0 && x < sw && y >= 0 && y < sh)
+                    alpha[y * sw + x] = 0;
+
+        /* Convert to premultiplied ARGB */
+        uint32_t* argb = calloc(npx, sizeof(uint32_t));
+        if (!argb) {
+            free(alpha);
+            return;
+        }
+
+        uint8_t cr = (uint8_t) (cfg_color_r * 255);
+        uint8_t cg = (uint8_t) (cfg_color_g * 255);
+        uint8_t cb = (uint8_t) (cfg_color_b * 255);
+
+        float active_opacity = e->is_active ? cfg_opacity : cfg_inactive_opacity;
+
+        for (int i = 0; i < npx; i++) {
+            uint8_t a = (uint8_t) (alpha[i] * active_opacity);
+            uint8_t r = (uint8_t) (cr * a / 255);
+            uint8_t g = (uint8_t) (cg * a / 255);
+            uint8_t b = (uint8_t) (cb * a / 255);
+
+            argb[i] = ((uint32_t) a << 24) | ((uint32_t) r << 16) | ((uint32_t) g << 8) | (uint32_t) b;
+        }
+
         free(alpha);
-        return;
+
+        e->full_shadow_data = argb;
+        e->full_shadow = cairo_image_surface_create_for_data(
+            (unsigned char*) argb, CAIRO_FORMAT_ARGB32, sw, sh, sw * 4);
+        
+        e->last_w = tw;
+        e->last_h = th;
+        e->last_active = e->is_active;
     }
-
-    uint8_t cr = (uint8_t) (cfg_color_r * 255);
-    uint8_t cg = (uint8_t) (cfg_color_g * 255);
-    uint8_t cb = (uint8_t) (cfg_color_b * 255);
-
-    float active_opacity = e->is_active ? cfg_opacity : cfg_inactive_opacity;
-
-    for (int i = 0; i < npx; i++) {
-        uint8_t a = (uint8_t) (alpha[i] * active_opacity);
-        uint8_t r = (uint8_t) (cr * a / 255);
-        uint8_t g = (uint8_t) (cg * a / 255);
-        uint8_t b = (uint8_t) (cb * a / 255);
-
-        argb[i] = ((uint32_t) a << 24) | ((uint32_t) r << 16) | ((uint32_t) g << 8) | (uint32_t) b;
-    }
-
-    free(alpha);
-
-    /* Paint onto a stored X pixmap via Cairo, applying clamp offset */
-    cairo_surface_t* img = cairo_image_surface_create_for_data(
-        (unsigned char*) argb, CAIRO_FORMAT_ARGB32, sw, sh, sw * 4);
 
     if (e->pixmap) XFreePixmap(dpy, e->pixmap);
     e->pixmap = XCreatePixmap(dpy, e->shadow, actual_w, actual_h, 32);
@@ -320,17 +339,17 @@ static void render_shadow(ShadowEntry* e, int tw, int th) {
     cairo_surface_t* xsurf = cairo_xlib_surface_create(
         dpy, e->pixmap, argb_visual, actual_w, actual_h);
     cairo_t* cr2 = cairo_create(xsurf);
-    cairo_set_source_surface(cr2, img, -render_offset_x, -render_offset_y);
+    cairo_set_source_surface(cr2, e->full_shadow, -render_offset_x, -render_offset_y);
     cairo_set_operator(cr2, CAIRO_OPERATOR_SOURCE);
     cairo_paint(cr2);
     cairo_destroy(cr2);
     cairo_surface_destroy(xsurf);
-    cairo_surface_destroy(img);
 
     XSetWindowBackgroundPixmap(dpy, e->shadow, e->pixmap);
     XClearWindow(dpy, e->shadow);
 
-    free(argb);
+    int cx0 = cfg_radius - cfg_offset_x;
+    int cy0 = cfg_radius - cfg_offset_y;
 
     /*
      * XShape BOUNDING: remove the center rectangle so that area
@@ -588,6 +607,8 @@ static void remove_shadow(ShadowEntry* target) {
     while (*pp) {
         if (*pp == target) {
             *pp = target->next;
+            if (target->full_shadow) cairo_surface_destroy(target->full_shadow);
+            if (target->full_shadow_data) free(target->full_shadow_data);
             if (target->pixmap) XFreePixmap(dpy, target->pixmap);
             XDestroyWindow(dpy, target->shadow);
             free(target);
