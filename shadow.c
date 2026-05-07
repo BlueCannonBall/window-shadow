@@ -432,6 +432,15 @@ static Window create_shadow_window(int x, int y, int tw, int th) {
     Atom states[] = {A_NET_WM_STATE_SKIP_TASKBAR, A_NET_WM_STATE_SKIP_PAGER};
     XChangeProperty(dpy, w, A_NET_WM_STATE, XA_ATOM, 32, PropModeReplace, (unsigned char*) states, 2);
 
+    /* Explicitly tell the WM this window cannot take focus so it skips Alt+Tab */
+    XWMHints* wmhints = XAllocWMHints();
+    if (wmhints) {
+        wmhints->flags = InputHint;
+        wmhints->input = False;
+        XSetWMHints(dpy, w, wmhints);
+        XFree(wmhints);
+    }
+
     /* Click-through: empty input shape */
     XserverRegion rgn = XFixesCreateRegion(dpy, NULL, 0);
     XFixesSetWindowShapeRegion(dpy, w, ShapeInput, 0, 0, rgn);
