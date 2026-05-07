@@ -837,6 +837,8 @@ static void handle_configure(XConfigureEvent* ev) {
     }
 
     if (resized || actual_w != e->sw || actual_h != e->sh) {
+        printf("DEBUG: render_shadow triggered. resized=%d, aw=%d e->sw=%d, ah=%d e->sh=%d\n", 
+               resized, actual_w, e->sw, actual_h, e->sh);
         XMoveResizeWindow(dpy, e->shadow, actual_x, actual_y, actual_w, actual_h);
         render_shadow(e, e->w, e->h);
     } else {
@@ -1057,8 +1059,13 @@ int main(int argc, char** argv) {
 
     /* Main event loop */
     XEvent ev;
+    int event_count = 0;
     while (running) {
         XNextEvent(dpy, &ev);
+        event_count++;
+        if (event_count % 100 == 0) {
+            printf("DEBUG: Processed 100 events. Last event type: %d\n", ev.type);
+        }
 
         switch (ev.type) {
         case MapNotify: handle_map(&ev.xmap); break;
