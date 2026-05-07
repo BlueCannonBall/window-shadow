@@ -18,7 +18,6 @@
 #include <cairo/cairo-xlib.h>
 #include <cairo/cairo.h>
 #include <getopt.h>
-#include <math.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -308,7 +307,7 @@ static void render_shadow(ShadowEntry* e, int tw, int th) {
 
         argb[i] = ((uint32_t) a << 24) | ((uint32_t) r << 16) | ((uint32_t) g << 8) | (uint32_t) b;
     }
-    
+
     free(alpha);
 
     /* Paint onto a stored X pixmap via Cairo, applying clamp offset */
