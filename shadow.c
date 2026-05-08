@@ -778,7 +778,22 @@ static void scan_existing_windows(void) {
 
 static void handle_map(XMapEvent* ev) {
     if (ev->override_redirect) return;
-    check_window(ev->window);
+    
+    /* Ensure we always check the toplevel, not an inner client window.
+     * Since we now listen to StructureNotify on the client window as well,
+     * we get MapNotify for both the toplevel AND the client! */
+    Window dummy, parent = None, *children = NULL;
+    unsigned int nch = 0;
+    Window w = ev->window;
+    while (1) {
+        if (!XQueryTree(dpy, w, &dummy, &parent, &children, &nch))
+            return;
+        if (children) XFree(children);
+        if (parent == root || parent == None) break;
+        w = parent;
+    }
+    
+    check_window(w);
 }
 
 static void handle_unmap(XUnmapEvent* ev) {
