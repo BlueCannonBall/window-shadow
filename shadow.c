@@ -47,12 +47,12 @@ typedef struct ShadowEntry {
     int x, y, w, h;  /* toplevel geometry */
     int sw, sh;      /* shadow window size */
     int is_active;   /* focus state */
-    
+
     /* Cache for full, un-clamped shadow surface */
     cairo_surface_t* full_shadow;
     uint32_t* full_shadow_data;
     int last_w, last_h, last_active;
-    
+
     struct ShadowEntry* next;
 } ShadowEntry;
 
@@ -120,11 +120,11 @@ static Atom A_NET_WORKAREA;
 
 static int cfg_debug = 0;
 
-static int cfg_radius = 60;
+static int cfg_radius = 50;
 static float cfg_opacity = 0.8f;
 static float cfg_inactive_opacity = 0.4f;
 static int cfg_offset_x = 0;
-static int cfg_offset_y = 8;
+static int cfg_offset_y = 10;
 static float cfg_color_r = 0.0f;
 static float cfg_color_g = 0.0f;
 static float cfg_color_b = 0.0f;
@@ -337,7 +337,7 @@ static void render_shadow(ShadowEntry* e, int tw, int th) {
         e->full_shadow_data = argb;
         e->full_shadow = cairo_image_surface_create_for_data(
             (unsigned char*) argb, CAIRO_FORMAT_ARGB32, sw, sh, sw * 4);
-        
+
         e->last_w = tw;
         e->last_h = th;
         e->last_active = e->is_active;
@@ -1070,33 +1070,33 @@ int main(int argc, char** argv) {
                     update_workarea_cache();
                 } else if (ev.xproperty.atom == A_NET_ACTIVE_WINDOW) {
                     /* Get the currently active window */
-                unsigned long nitems = 0;
-                unsigned char* data = get_prop(root, A_NET_ACTIVE_WINDOW, XA_WINDOW, NULL, &nitems);
-                Window active = None;
-                if (data && nitems > 0) {
-                    active = *(Window*) data;
-                    XFree(data);
-                } else if (data) {
-                    XFree(data);
-                }
-                /* Re-stack the active window's shadow exactly below it.
-                 * This keeps shadows properly interleaved without spamming. */
-                for (ShadowEntry* e = shadow_list; e; e = e->next) {
-                    if (e->toplevel == active || e->client == active) {
-                        if (!e->is_active) {
-                            e->is_active = 1;
-                            render_shadow(e, e->w, e->h);
-                            XClearWindow(dpy, e->shadow);
-                        }
-                        stack_shadow_below(e);
-                    } else {
-                        if (e->is_active) {
-                            e->is_active = 0;
-                            render_shadow(e, e->w, e->h);
-                            XClearWindow(dpy, e->shadow);
+                    unsigned long nitems = 0;
+                    unsigned char* data = get_prop(root, A_NET_ACTIVE_WINDOW, XA_WINDOW, NULL, &nitems);
+                    Window active = None;
+                    if (data && nitems > 0) {
+                        active = *(Window*) data;
+                        XFree(data);
+                    } else if (data) {
+                        XFree(data);
+                    }
+                    /* Re-stack the active window's shadow exactly below it.
+                     * This keeps shadows properly interleaved without spamming. */
+                    for (ShadowEntry* e = shadow_list; e; e = e->next) {
+                        if (e->toplevel == active || e->client == active) {
+                            if (!e->is_active) {
+                                e->is_active = 1;
+                                render_shadow(e, e->w, e->h);
+                                XClearWindow(dpy, e->shadow);
+                            }
+                            stack_shadow_below(e);
+                        } else {
+                            if (e->is_active) {
+                                e->is_active = 0;
+                                render_shadow(e, e->w, e->h);
+                                XClearWindow(dpy, e->shadow);
+                            }
                         }
                     }
-                }
                 }
             }
             break;
