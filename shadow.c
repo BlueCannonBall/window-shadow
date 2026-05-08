@@ -130,9 +130,9 @@ static float cfg_color_r = 0.0f;
 static float cfg_color_g = 0.0f;
 static float cfg_color_b = 0.0f;
 static float cfg_outline_width = 1.0f;
-static float cfg_outline_r = 0.3f;
-static float cfg_outline_g = 0.3f;
-static float cfg_outline_b = 0.3f;
+static float cfg_outline_r = 0.25f;
+static float cfg_outline_g = 0.25f;
+static float cfg_outline_b = 0.25f;
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
@@ -366,7 +366,7 @@ static void render_shadow(ShadowEntry* e, int tw, int th) {
         cairo_set_operator(cr2, CAIRO_OPERATOR_OVER);
         cairo_set_source_rgba(cr2, cfg_outline_r, cfg_outline_g, cfg_outline_b, 1.0);
         cairo_set_line_width(cr2, cfg_outline_width);
-
+    
         cairo_rectangle(cr2,
             (cx0 - render_offset_x) - (cfg_outline_width / 2.0),
             (cy0 - render_offset_y) - (cfg_outline_width / 2.0),
@@ -680,7 +680,7 @@ static void add_shadow(Window toplevel, Window client, int x, int y, int w, int 
     /* Select StructureNotify on the toplevel for move/resize */
     XSelectInput(dpy, toplevel, StructureNotifyMask | PropertyChangeMask);
     if (client != toplevel)
-        XSelectInput(dpy, client, StructureNotifyMask | PropertyChangeMask);
+        XSelectInput(dpy, client, PropertyChangeMask);
 
     e->next = shadow_list;
     shadow_list = e;
@@ -733,7 +733,7 @@ static void check_window(Window w) {
             if ((hints->flags & MWM_HINTS_DECORATIONS) &&
                 hints->decorations == 0) {
                 /* It's CSD but was skipped (maximized/fullscreen) — listen */
-                XSelectInput(dpy, client, StructureNotifyMask | PropertyChangeMask);
+                XSelectInput(dpy, client, PropertyChangeMask);
                 if (w != client)
                     XSelectInput(dpy, w, StructureNotifyMask);
                 if (cfg_debug) printf("  monitoring (currently skipped)\n");
@@ -778,30 +778,7 @@ static void scan_existing_windows(void) {
 
 static void handle_map(XMapEvent* ev) {
     if (ev->override_redirect) return;
-
-    /* Ensure we always check the toplevel, not an inner client window.
-     * Since we now listen to StructureNotify on the client window as well,
-     * we get MapNotify for both the toplevel AND the client! */
-    Window dummy, parent = None, *children = NULL;
-    unsigned int nch = 0;
-    Window w = ev->window;
-    while (1) {
-        if (!XQueryTree(dpy, w, &dummy, &parent, &children, &nch))
-            return;
-        if (children) XFree(children);
-        if (parent == root || parent == None) break;
-        w = parent;
-    }
-    
-    ShadowEntry* e = find_shadow_for_toplevel(w);
-    if (e) {
-        if (is_csd_window(e->client)) {
-            XMapWindow(dpy, e->shadow);
-        }
-        return;
-    }
-    
-    check_window(w);
+    check_window(ev->window);
 }
 
 static void handle_unmap(XUnmapEvent* ev) {
@@ -827,14 +804,17 @@ static void handle_expose(XExposeEvent* ev) {
 
 static void handle_configure(XConfigureEvent* ev) {
     ShadowEntry* e = find_shadow_for_toplevel(ev->window);
-    if (!e) e = find_shadow_for_client(ev->window);
-    if (!e) return;
+    if (!e) {
+        /* Untracked window — maybe just un-maximized? Re-check it. */
+        check_window(ev->window);
+        return;
+    }
 
     /* Get absolute coordinates via XTranslateCoordinates.
      * This synchronous call implicitly throttles the event loop and fetches the
      * most up-to-date window dimensions, safely compressing resize events. */
     int ax, ay, aw, ah;
-    get_absolute_geometry(e->toplevel, &ax, &ay, &aw, &ah);
+    get_absolute_geometry(ev->window, &ax, &ay, &aw, &ah);
 
     int resized = (aw != e->w || ah != e->h);
 
@@ -906,10 +886,8 @@ static void handle_property(XPropertyEvent* ev) {
         ShadowEntry* e = find_shadow_for_client(ev->window);
         if (e) {
             if (!is_csd_window(e->client)) {
-                if (cfg_debug) printf("state change: unmapping shadow for 0x%lx\n", e->toplevel);
-                XUnmapWindow(dpy, e->shadow);
-            } else {
-                XMapWindow(dpy, e->shadow);
+                if (cfg_debug) printf("state change: removing shadow for 0x%lx\n", e->toplevel);
+                remove_shadow(e);
             }
         } else {
             /* Maybe window was un-maximized, check if it now needs shadow */
@@ -1144,7 +1122,7 @@ int main(int argc, char** argv) {
                         XFree(data);
                     }
                     current_active_window = active;
-
+                    
                     /* Re-stack the active window's shadow exactly below it.
                      * This keeps shadows properly interleaved without spamming. */
                     for (ShadowEntry* e = shadow_list; e; e = e->next) {
