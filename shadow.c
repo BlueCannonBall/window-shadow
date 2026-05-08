@@ -820,6 +820,13 @@ static void handle_expose(XExposeEvent* ev) {
 
 static void handle_configure(XConfigureEvent* ev) {
     Window tl = get_toplevel(ev->window);
+    
+    /* Avoid double-processing moves:
+     * When the toplevel wrapper moves, the WM sends a ConfigureNotify to the toplevel,
+     * AND a synthetic ConfigureNotify to the inner client. If we process both, we double
+     * the latency of the event loop. We only need the client's event if it's a REAL resize! */
+    if (ev->window != tl && ev->send_event) return;
+
     ShadowEntry* e = find_shadow_for_toplevel(tl);
     if (!e) return;
 
