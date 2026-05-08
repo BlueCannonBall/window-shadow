@@ -130,9 +130,9 @@ static float cfg_color_r = 0.0f;
 static float cfg_color_g = 0.0f;
 static float cfg_color_b = 0.0f;
 static float cfg_outline_width = 1.0f;
-static float cfg_outline_r = 0.25f;
-static float cfg_outline_g = 0.25f;
-static float cfg_outline_b = 0.25f;
+static float cfg_outline_r = 0.3f;
+static float cfg_outline_g = 0.3f;
+static float cfg_outline_b = 0.3f;
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
@@ -366,7 +366,7 @@ static void render_shadow(ShadowEntry* e, int tw, int th) {
         cairo_set_operator(cr2, CAIRO_OPERATOR_OVER);
         cairo_set_source_rgba(cr2, cfg_outline_r, cfg_outline_g, cfg_outline_b, 1.0);
         cairo_set_line_width(cr2, cfg_outline_width);
-    
+
         cairo_rectangle(cr2,
             (cx0 - render_offset_x) - (cfg_outline_width / 2.0),
             (cy0 - render_offset_y) - (cfg_outline_width / 2.0),
@@ -703,7 +703,7 @@ static void get_absolute_geometry(Window w, int* x, int* y, int* width, int* hei
 }
 
 static Window get_toplevel(Window w) {
-    Window dummy, parent = None, root_ret = None;
+    Window parent = None, root_ret = None;
     Window* children = NULL;
     unsigned int nch = 0;
     while (1) {
@@ -718,7 +718,7 @@ static Window get_toplevel(Window w) {
 
 static void check_window(Window w) {
     w = get_toplevel(w);
-    
+
     if (find_shadow_for_toplevel(w)) return;
     if (find_shadow_for_shadow(w)) return;
 
@@ -1135,7 +1135,7 @@ int main(int argc, char** argv) {
                         XFree(data);
                     }
                     current_active_window = active;
-                    
+
                     /* Re-stack the active window's shadow exactly below it.
                      * This keeps shadows properly interleaved without spamming. */
                     for (ShadowEntry* e = shadow_list; e; e = e->next) {
