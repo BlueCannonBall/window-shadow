@@ -66,6 +66,7 @@ static Visual* argb_visual;
 static Colormap argb_cmap;
 static ShadowEntry* shadow_list;
 static volatile int running = 1;
+static Window current_active_window = None;
 
 static int cached_wx = 0, cached_wy = 0, cached_ww = 0, cached_wh = 0;
 
@@ -666,6 +667,7 @@ static void add_shadow(Window toplevel, Window client, int x, int y, int w, int 
     e->y = y;
     e->w = w;
     e->h = h;
+    e->is_active = (toplevel == current_active_window || client == current_active_window);
     e->shadow = create_shadow_window(x, y, w, h);
 
     /* Map first, then render — ensures WM has reparented before we draw */
@@ -1073,6 +1075,16 @@ int main(int argc, char** argv) {
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
 
+    /* Initialize active window */
+    unsigned long nitems = 0;
+    unsigned char* data = get_prop(root, A_NET_ACTIVE_WINDOW, XA_WINDOW, NULL, &nitems);
+    if (data && nitems > 0) {
+        current_active_window = *(Window*) data;
+        XFree(data);
+    } else if (data) {
+        XFree(data);
+    }
+
     /* Scan existing windows */
     scan_existing_windows();
 
@@ -1109,6 +1121,8 @@ int main(int argc, char** argv) {
                     } else if (data) {
                         XFree(data);
                     }
+                    current_active_window = active;
+                    
                     /* Re-stack the active window's shadow exactly below it.
                      * This keeps shadows properly interleaved without spamming. */
                     for (ShadowEntry* e = shadow_list; e; e = e->next) {
