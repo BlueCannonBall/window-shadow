@@ -130,9 +130,9 @@ static float cfg_color_r = 0.0f;
 static float cfg_color_g = 0.0f;
 static float cfg_color_b = 0.0f;
 static float cfg_outline_width = 1.0f;
-static float cfg_outline_r = 0.25f;
-static float cfg_outline_g = 0.25f;
-static float cfg_outline_b = 0.25f;
+static float cfg_outline_r = 0.3f;
+static float cfg_outline_g = 0.3f;
+static float cfg_outline_b = 0.3f;
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
@@ -366,7 +366,7 @@ static void render_shadow(ShadowEntry* e, int tw, int th) {
         cairo_set_operator(cr2, CAIRO_OPERATOR_OVER);
         cairo_set_source_rgba(cr2, cfg_outline_r, cfg_outline_g, cfg_outline_b, 1.0);
         cairo_set_line_width(cr2, cfg_outline_width);
-    
+
         cairo_rectangle(cr2,
             (cx0 - render_offset_x) - (cfg_outline_width / 2.0),
             (cy0 - render_offset_y) - (cfg_outline_width / 2.0),
@@ -778,7 +778,7 @@ static void scan_existing_windows(void) {
 
 static void handle_map(XMapEvent* ev) {
     if (ev->override_redirect) return;
-    
+
     /* Ensure we always check the toplevel, not an inner client window.
      * Since we now listen to StructureNotify on the client window as well,
      * we get MapNotify for both the toplevel AND the client! */
@@ -791,6 +791,14 @@ static void handle_map(XMapEvent* ev) {
         if (children) XFree(children);
         if (parent == root || parent == None) break;
         w = parent;
+    }
+    
+    ShadowEntry* e = find_shadow_for_toplevel(w);
+    if (e) {
+        if (is_csd_window(e->client)) {
+            XMapWindow(dpy, e->shadow);
+        }
+        return;
     }
     
     check_window(w);
@@ -898,8 +906,10 @@ static void handle_property(XPropertyEvent* ev) {
         ShadowEntry* e = find_shadow_for_client(ev->window);
         if (e) {
             if (!is_csd_window(e->client)) {
-                if (cfg_debug) printf("state change: removing shadow for 0x%lx\n", e->toplevel);
-                remove_shadow(e);
+                if (cfg_debug) printf("state change: unmapping shadow for 0x%lx\n", e->toplevel);
+                XUnmapWindow(dpy, e->shadow);
+            } else {
+                XMapWindow(dpy, e->shadow);
             }
         } else {
             /* Maybe window was un-maximized, check if it now needs shadow */
@@ -1134,7 +1144,7 @@ int main(int argc, char** argv) {
                         XFree(data);
                     }
                     current_active_window = active;
-                    
+
                     /* Re-stack the active window's shadow exactly below it.
                      * This keeps shadows properly interleaved without spamming. */
                     for (ShadowEntry* e = shadow_list; e; e = e->next) {
