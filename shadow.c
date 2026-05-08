@@ -680,7 +680,7 @@ static void add_shadow(Window toplevel, Window client, int x, int y, int w, int 
     /* Select StructureNotify on the toplevel for move/resize */
     XSelectInput(dpy, toplevel, StructureNotifyMask | PropertyChangeMask);
     if (client != toplevel)
-        XSelectInput(dpy, client, PropertyChangeMask);
+        XSelectInput(dpy, client, StructureNotifyMask | PropertyChangeMask);
 
     e->next = shadow_list;
     shadow_list = e;
@@ -702,7 +702,23 @@ static void get_absolute_geometry(Window w, int* x, int* y, int* width, int* hei
     XTranslateCoordinates(dpy, w, root, 0, 0, x, y, &child);
 }
 
+static Window get_toplevel(Window w) {
+    Window dummy, parent = None, root_ret = None;
+    Window* children = NULL;
+    unsigned int nch = 0;
+    while (1) {
+        if (!XQueryTree(dpy, w, &root_ret, &parent, &children, &nch))
+            return w;
+        if (children) XFree(children);
+        if (parent == root_ret || parent == None) break;
+        w = parent;
+    }
+    return w;
+}
+
 static void check_window(Window w) {
+    w = get_toplevel(w);
+    
     if (find_shadow_for_toplevel(w)) return;
     if (find_shadow_for_shadow(w)) return;
 
@@ -733,7 +749,7 @@ static void check_window(Window w) {
             if ((hints->flags & MWM_HINTS_DECORATIONS) &&
                 hints->decorations == 0) {
                 /* It's CSD but was skipped (maximized/fullscreen) — listen */
-                XSelectInput(dpy, client, PropertyChangeMask);
+                XSelectInput(dpy, client, StructureNotifyMask | PropertyChangeMask);
                 if (w != client)
                     XSelectInput(dpy, w, StructureNotifyMask);
                 if (cfg_debug) printf("  monitoring (currently skipped)\n");
@@ -803,18 +819,15 @@ static void handle_expose(XExposeEvent* ev) {
 }
 
 static void handle_configure(XConfigureEvent* ev) {
-    ShadowEntry* e = find_shadow_for_toplevel(ev->window);
-    if (!e) {
-        /* Untracked window — maybe just un-maximized? Re-check it. */
-        check_window(ev->window);
-        return;
-    }
+    Window tl = get_toplevel(ev->window);
+    ShadowEntry* e = find_shadow_for_toplevel(tl);
+    if (!e) return;
 
     /* Get absolute coordinates via XTranslateCoordinates.
      * This synchronous call implicitly throttles the event loop and fetches the
      * most up-to-date window dimensions, safely compressing resize events. */
     int ax, ay, aw, ah;
-    get_absolute_geometry(ev->window, &ax, &ay, &aw, &ah);
+    get_absolute_geometry(e->toplevel, &ax, &ay, &aw, &ah);
 
     int resized = (aw != e->w || ah != e->h);
 
