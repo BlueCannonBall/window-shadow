@@ -680,7 +680,7 @@ static void add_shadow(Window toplevel, Window client, int x, int y, int w, int 
     /* Select StructureNotify on the toplevel for move/resize */
     XSelectInput(dpy, toplevel, StructureNotifyMask | PropertyChangeMask);
     if (client != toplevel)
-        XSelectInput(dpy, client, PropertyChangeMask);
+        XSelectInput(dpy, client, StructureNotifyMask | PropertyChangeMask);
 
     e->next = shadow_list;
     shadow_list = e;
@@ -733,7 +733,7 @@ static void check_window(Window w) {
             if ((hints->flags & MWM_HINTS_DECORATIONS) &&
                 hints->decorations == 0) {
                 /* It's CSD but was skipped (maximized/fullscreen) — listen */
-                XSelectInput(dpy, client, PropertyChangeMask);
+                XSelectInput(dpy, client, StructureNotifyMask | PropertyChangeMask);
                 if (w != client)
                     XSelectInput(dpy, w, StructureNotifyMask);
                 if (cfg_debug) printf("  monitoring (currently skipped)\n");
@@ -804,17 +804,14 @@ static void handle_expose(XExposeEvent* ev) {
 
 static void handle_configure(XConfigureEvent* ev) {
     ShadowEntry* e = find_shadow_for_toplevel(ev->window);
-    if (!e) {
-        /* Untracked window — maybe just un-maximized? Re-check it. */
-        check_window(ev->window);
-        return;
-    }
+    if (!e) e = find_shadow_for_client(ev->window);
+    if (!e) return;
 
     /* Get absolute coordinates via XTranslateCoordinates.
      * This synchronous call implicitly throttles the event loop and fetches the
      * most up-to-date window dimensions, safely compressing resize events. */
     int ax, ay, aw, ah;
-    get_absolute_geometry(ev->window, &ax, &ay, &aw, &ah);
+    get_absolute_geometry(e->toplevel, &ax, &ay, &aw, &ah);
 
     int resized = (aw != e->w || ah != e->h);
 
