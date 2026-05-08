@@ -352,14 +352,27 @@ static void render_shadow(ShadowEntry* e, int tw, int th) {
     cairo_set_source_surface(cr2, e->full_shadow, -render_offset_x, -render_offset_y);
     cairo_set_operator(cr2, CAIRO_OPERATOR_SOURCE);
     cairo_paint(cr2);
+
+    /* Draw a solid gray outline */
+    cairo_set_operator(cr2, CAIRO_OPERATOR_OVER);
+    cairo_set_source_rgba(cr2, 0.4, 0.4, 0.4, 1.0); /* Solid gray */
+    cairo_set_line_width(cr2, 1.0);
+    
+    int cx0 = cfg_radius - cfg_offset_x;
+    int cy0 = cfg_radius - cfg_offset_y;
+    
+    cairo_rectangle(cr2, 
+        (cx0 - render_offset_x) - 0.5, 
+        (cy0 - render_offset_y) - 0.5, 
+        tw + 1.0, 
+        th + 1.0);
+    cairo_stroke(cr2);
+
     cairo_destroy(cr2);
     cairo_surface_destroy(xsurf);
 
     XSetWindowBackgroundPixmap(dpy, e->shadow, e->pixmap);
     XClearWindow(dpy, e->shadow);
-
-    int cx0 = cfg_radius - cfg_offset_x;
-    int cy0 = cfg_radius - cfg_offset_y;
 
     /*
      * XShape BOUNDING: remove the center rectangle so that area
