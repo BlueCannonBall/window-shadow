@@ -129,9 +129,9 @@ static float cfg_color_r = 0.0f;
 static float cfg_color_g = 0.0f;
 static float cfg_color_b = 0.0f;
 static float cfg_outline_width = 1.0f;
-static float cfg_outline_r = 0.3f;
-static float cfg_outline_g = 0.3f;
-static float cfg_outline_b = 0.3f;
+static float cfg_outline_r = 0.25f;
+static float cfg_outline_g = 0.25f;
+static float cfg_outline_b = 0.25f;
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
