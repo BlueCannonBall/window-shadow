@@ -128,6 +128,10 @@ static int cfg_offset_y = 10;
 static float cfg_color_r = 0.0f;
 static float cfg_color_g = 0.0f;
 static float cfg_color_b = 0.0f;
+static float cfg_outline_width = 1.0f;
+static float cfg_outline_r = 0.3f;
+static float cfg_outline_g = 0.3f;
+static float cfg_outline_b = 0.3f;
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
@@ -353,20 +357,22 @@ static void render_shadow(ShadowEntry* e, int tw, int th) {
     cairo_set_operator(cr2, CAIRO_OPERATOR_SOURCE);
     cairo_paint(cr2);
 
-    /* Draw a solid gray outline */
-    cairo_set_operator(cr2, CAIRO_OPERATOR_OVER);
-    cairo_set_source_rgba(cr2, 0.4, 0.4, 0.4, 1.0); /* Solid gray */
-    cairo_set_line_width(cr2, 1.0);
-    
     int cx0 = cfg_radius - cfg_offset_x;
     int cy0 = cfg_radius - cfg_offset_y;
+
+    if (cfg_outline_width > 0.0f) {
+        /* Draw a solid outline */
+        cairo_set_operator(cr2, CAIRO_OPERATOR_OVER);
+        cairo_set_source_rgba(cr2, cfg_outline_r, cfg_outline_g, cfg_outline_b, 1.0);
+        cairo_set_line_width(cr2, cfg_outline_width);
     
-    cairo_rectangle(cr2, 
-        (cx0 - render_offset_x) - 0.5, 
-        (cy0 - render_offset_y) - 0.5, 
-        tw + 1.0, 
-        th + 1.0);
-    cairo_stroke(cr2);
+        cairo_rectangle(cr2,
+            (cx0 - render_offset_x) - (cfg_outline_width / 2.0),
+            (cy0 - render_offset_y) - (cfg_outline_width / 2.0),
+            tw + cfg_outline_width,
+            th + cfg_outline_width);
+        cairo_stroke(cr2);
+    }
 
     cairo_destroy(cr2);
     cairo_surface_destroy(xsurf);
@@ -947,19 +953,21 @@ static void usage(const char* prog) {
         "Options:\n"
         "  --radius  N     Shadow blur radius in pixels  (default: 60)\n"
         "  --opacity F     Shadow opacity 0.0-1.0        (default: 0.85)\n"
-        "  --offset-x N    Horizontal shadow offset       (default: 0)\n"
-        "  --offset-y N    Vertical shadow offset          (default: 12)\n"
-        "  --color RRGGBB  Shadow color in hex            (default: 000000)\n"
+        "  --offset-x N    Horizontal shadow offset      (default: 0)\n"
+        "  --offset-y N    Vertical shadow offset        (default: 12)\n"
+        "  --color RRGGBB  Shadow color in hex           (default: 000000)\n"
+        "  --outline-width F Outline width in pixels     (default: 1.0)\n"
+        "  --outline-color RRGGBB Outline color in hex   (default: 4c4c4c)\n"
         "  --help          Show this help\n",
         prog);
 }
 
-static int parse_hex_color(const char* s) {
+static int parse_hex_color(const char* s, float* r_out, float* g_out, float* b_out) {
     unsigned int r, g, b;
     if (sscanf(s, "%2x%2x%2x", &r, &g, &b) != 3) return -1;
-    cfg_color_r = r / 255.0f;
-    cfg_color_g = g / 255.0f;
-    cfg_color_b = b / 255.0f;
+    *r_out = r / 255.0f;
+    *g_out = g / 255.0f;
+    *b_out = b / 255.0f;
     return 0;
 }
 
@@ -970,6 +978,8 @@ static void parse_args(int argc, char** argv) {
         {"offset-x", required_argument, NULL, 'x'},
         {"offset-y", required_argument, NULL, 'y'},
         {"color", required_argument, NULL, 'c'},
+        {"outline-width", required_argument, NULL, 'w'},
+        {"outline-color", required_argument, NULL, 'C'},
         {"debug", no_argument, NULL, 'd'},
         {"help", no_argument, NULL, 'h'},
         {NULL, 0, NULL, 0}};
@@ -982,8 +992,15 @@ static void parse_args(int argc, char** argv) {
         case 'x': cfg_offset_x = atoi(optarg); break;
         case 'y': cfg_offset_y = atoi(optarg); break;
         case 'c':
-            if (parse_hex_color(optarg) < 0) {
+            if (parse_hex_color(optarg, &cfg_color_r, &cfg_color_g, &cfg_color_b) < 0) {
                 fprintf(stderr, "Invalid color: %s\n", optarg);
+                exit(1);
+            }
+            break;
+        case 'w': cfg_outline_width = atof(optarg); break;
+        case 'C':
+            if (parse_hex_color(optarg, &cfg_outline_r, &cfg_outline_g, &cfg_outline_b) < 0) {
+                fprintf(stderr, "Invalid outline color: %s\n", optarg);
                 exit(1);
             }
             break;
