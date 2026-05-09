@@ -944,7 +944,9 @@ static void handle_unmap(XUnmapEvent* ev) {
     ShadowEntry* e = find_shadow_for_toplevel(ev->window);
     if (e) {
         if (use_native_shadows) {
-            XDeleteProperty(dpy, e->client, A_KDE_NET_WM_SHADOW);
+            /* In native mode, leave the property on the window.
+             * KWin will animate the shadow along with the window
+             * during the minimize animation and hide it naturally. */
         } else {
             XUnmapWindow(dpy, e->shadow);
         }
