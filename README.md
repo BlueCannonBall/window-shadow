@@ -24,6 +24,10 @@ Key features:
   non-reparenting (i3, dwm, bspwm) window managers
 - **GTK CSD filtering**: Skips GTK apps that provide their own shadows via
   `_GTK_FRAME_EXTENTS`
+- **Focus-aware**: Shadows subtly dim when a window loses focus
+- **Outline support**: Can render a thin border around windows for better contrast
+- **KDE Plasma Integration**: Supports native KDE shadows (`_KDE_NET_WM_SHADOW`)
+  for maximum performance on KWin
 - **Dynamic**: Responds to window creation, destruction, move, resize, and
   decoration property changes in real time
 
@@ -56,24 +60,26 @@ make
 ./window-shadow
 
 # Custom shadow appearance
-./window-shadow --radius 50 --opacity 0.6 --offset-y 12
+./window-shadow --radius 80 --opacity 0.6 --offset-y 15
 
 # Subtle shadow
 ./window-shadow --radius 20 --opacity 0.3 --offset-y 4
 
-# Colored shadow
-./window-shadow --color 1a1a2e --opacity 0.4
+# With outline
+./window-shadow --outline-width 1.5 --outline-color 333333
 ```
 
 ### Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--radius N` | `40` | Shadow blur radius in pixels |
-| `--opacity F` | `0.5` | Shadow opacity (0.0–1.0) |
+| `--radius N` | `50` | Shadow blur radius in pixels |
+| `--opacity F` | `0.8` | Shadow opacity (0.0–1.0) |
 | `--offset-x N` | `0` | Horizontal shadow offset |
-| `--offset-y N` | `8` | Vertical shadow offset |
+| `--offset-y N` | `10` | Vertical shadow offset |
 | `--color RRGGBB` | `000000` | Shadow color in hex |
+| `--outline-width F` | `1.0` | Outline width in pixels |
+| `--outline-color RRGGBB` | `4c4c4c` | Outline color in hex |
 
 ### Autostart
 
@@ -93,6 +99,7 @@ A window is considered CSD (needing a shadow) if:
 3. It does **not** have `_GTK_FRAME_EXTENTS` with large values (≥10px), which
    would indicate the app renders its own shadow (e.g., GNOME apps)
 4. It is not an override-redirect window (popups, tooltips, menus)
+5. It is not maximized, fullscreen, or hidden (shadows are hidden in these states)
 
 ## License
 
