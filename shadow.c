@@ -286,15 +286,12 @@ static void generate_native_shadow(float opacity, unsigned long* out_data) {
     int cx0 = pl;
     int cy0 = pt;
 
-    int box_x = cx0 + cfg_offset_x;
-    int box_y = cy0 + cfg_offset_y;
-
     int npx = sw * sh;
     unsigned char* alpha = calloc(npx, 1);
     if (!alpha) return;
 
-    for (int y = box_y; y < box_y + th; y++)
-        for (int x = box_x; x < box_x + tw; x++)
+    for (int y = cy0; y < cy0 + th; y++)
+        for (int x = cx0; x < cx0 + tw; x++)
             alpha[y * sw + x] = 255;
 
     gaussian_blur(alpha, sw, sh, cfg_radius);
