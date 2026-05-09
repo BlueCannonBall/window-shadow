@@ -421,8 +421,31 @@ static void render_shadow(ShadowEntry* e, int tw, int th) {
 /* ── Shadow window creation / destruction ──────────────────────────────── */
 
 static Window create_shadow_window(int x, int y, int tw, int th) {
-    int sw = tw + 2 * cfg_radius;
-    int sh = th + 2 * cfg_radius;
+    int actual_x = x - cfg_radius + cfg_offset_x;
+    int actual_y = y - cfg_radius + cfg_offset_y;
+    int actual_w = tw + 2 * cfg_radius;
+    int actual_h = th + 2 * cfg_radius;
+
+    int wa_x, wa_y, wa_w, wa_h;
+    get_workarea(&wa_x, &wa_y, &wa_w, &wa_h);
+
+    if (actual_x < wa_x) {
+        actual_w -= (wa_x - actual_x);
+        actual_x = wa_x;
+    }
+    if (actual_y < wa_y) {
+        actual_h -= (wa_y - actual_y);
+        actual_y = wa_y;
+    }
+    if (actual_x + actual_w > wa_x + wa_w) actual_w = (wa_x + wa_w) - actual_x;
+    if (actual_y + actual_h > wa_y + wa_h) actual_h = (wa_y + wa_h) - actual_y;
+
+    if (actual_w <= 0 || actual_h <= 0) {
+        actual_w = 1;
+        actual_h = 1;
+        actual_x = -100;
+        actual_y = -100;
+    }
 
     /*
      * Managed window (NOT override-redirect) so it participates in
@@ -436,7 +459,7 @@ static Window create_shadow_window(int x, int y, int tw, int th) {
     attrs.border_pixel = 0;
     attrs.event_mask = ExposureMask;
 
-    Window w = XCreateWindow(dpy, root, x - cfg_radius + cfg_offset_x, y - cfg_radius + cfg_offset_y, sw, sh, 0, 32, InputOutput, argb_visual, CWOverrideRedirect | CWColormap | CWBackPixel | CWBorderPixel | CWEventMask, &attrs);
+    Window w = XCreateWindow(dpy, root, actual_x, actual_y, actual_w, actual_h, 0, 32, InputOutput, argb_visual, CWOverrideRedirect | CWColormap | CWBackPixel | CWBorderPixel | CWEventMask, &attrs);
 
     /* Mark as our shadow window to prevent self-shadowing */
     long marker = 1;
@@ -820,7 +843,7 @@ static void handle_expose(XExposeEvent* ev) {
 
 static void handle_configure(XConfigureEvent* ev) {
     Window tl = get_toplevel(ev->window);
-    
+
     /* Avoid double-processing moves:
      * When the toplevel wrapper moves, the WM sends a ConfigureNotify to the toplevel,
      * AND a synthetic ConfigureNotify to the inner client. If we process both, we double
