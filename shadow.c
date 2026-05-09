@@ -271,7 +271,15 @@ static void generate_native_shadow(float opacity, unsigned long* out_data) {
     if (pt < 0) pt = 0;
     if (pb < 0) pb = 0;
 
-    int tw = 50, th = 50;
+    /* A Gaussian blur must be fed by a source area larger than its blur radius,
+     * otherwise the edges are starved of intensity and the shadow appears too faint.
+     * We simulate an infinitely large window by making the internal drawing box
+     * sufficiently large (radius * 4), then extracting 1-pixel slices from the center! */
+    int tw = cfg_radius * 4;
+    int th = cfg_radius * 4;
+    if (tw < 50) tw = 50;
+    if (th < 50) th = 50;
+    
     int sw = tw + pl + pr;
     int sh = th + pt + pb;
 
@@ -320,15 +328,18 @@ static void generate_native_shadow(float opacity, unsigned long* out_data) {
         cairo_destroy(cr_ctx);
     }
 
+    int slice_cx = cx0 + tw / 2;
+    int slice_cy = cy0 + th / 2;
+
     /* Order: Top, Top-Right, Right, Bottom-Right, Bottom, Bottom-Left, Left, Top-Left */
-    out_data[0] = create_slice(full, cx0, 0, tw, pt);
-    out_data[1] = create_slice(full, cx0 + tw, 0, pr, pt);
-    out_data[2] = create_slice(full, cx0 + tw, cy0, pr, th);
-    out_data[3] = create_slice(full, cx0 + tw, cy0 + th, pr, pb);
-    out_data[4] = create_slice(full, cx0, cy0 + th, tw, pb);
-    out_data[5] = create_slice(full, 0, cy0 + th, pl, pb);
-    out_data[6] = create_slice(full, 0, cy0, pl, th);
-    out_data[7] = create_slice(full, 0, 0, pl, pt);
+    out_data[0] = create_slice(full, slice_cx, 0, 1, pt);             /* Top */
+    out_data[1] = create_slice(full, cx0 + tw, 0, pr, pt);            /* Top-Right */
+    out_data[2] = create_slice(full, cx0 + tw, slice_cy, pr, 1);      /* Right */
+    out_data[3] = create_slice(full, cx0 + tw, cy0 + th, pr, pb);     /* Bottom-Right */
+    out_data[4] = create_slice(full, slice_cx, cy0 + th, 1, pb);      /* Bottom */
+    out_data[5] = create_slice(full, 0, cy0 + th, pl, pb);            /* Bottom-Left */
+    out_data[6] = create_slice(full, 0, slice_cy, pl, 1);             /* Left */
+    out_data[7] = create_slice(full, 0, 0, pl, pt);                   /* Top-Left */
 
     /* Padding: Top, Right, Bottom, Left */
     out_data[8] = pt;
@@ -771,7 +782,7 @@ static void remove_shadow(ShadowEntry* target) {
         if (*pp == target) {
             *pp = target->next;
             if (use_native_shadows) {
-                XDeleteProperty(dpy, target->toplevel, A_KDE_NET_WM_SHADOW);
+                XDeleteProperty(dpy, target->client, A_KDE_NET_WM_SHADOW);
             } else {
                 if (target->full_shadow) cairo_surface_destroy(target->full_shadow);
                 if (target->full_shadow_data) free(target->full_shadow_data);
@@ -799,7 +810,7 @@ static void add_shadow(Window toplevel, Window client, int x, int y, int w, int 
 
     if (use_native_shadows) {
         unsigned long* data = e->is_active ? native_active_data : native_inactive_data;
-        XChangeProperty(dpy, toplevel, A_KDE_NET_WM_SHADOW, XA_CARDINAL, 32, PropModeReplace, (unsigned char*) data, 12);
+        XChangeProperty(dpy, client, A_KDE_NET_WM_SHADOW, XA_CARDINAL, 32, PropModeReplace, (unsigned char*) data, 12);
     } else {
         e->shadow = create_shadow_window(x, y, w, h);
 
@@ -935,7 +946,7 @@ static void handle_unmap(XUnmapEvent* ev) {
     ShadowEntry* e = find_shadow_for_toplevel(ev->window);
     if (e) {
         if (use_native_shadows) {
-            XDeleteProperty(dpy, e->toplevel, A_KDE_NET_WM_SHADOW);
+            XDeleteProperty(dpy, e->client, A_KDE_NET_WM_SHADOW);
         } else {
             XUnmapWindow(dpy, e->shadow);
         }
@@ -1325,7 +1336,7 @@ int main(int argc, char** argv) {
                             if (!e->is_active) {
                                 e->is_active = 1;
                                 if (use_native_shadows) {
-                                    XChangeProperty(dpy, e->toplevel, A_KDE_NET_WM_SHADOW, XA_CARDINAL, 32, PropModeReplace, (unsigned char*) native_active_data, 12);
+                                    XChangeProperty(dpy, e->client, A_KDE_NET_WM_SHADOW, XA_CARDINAL, 32, PropModeReplace, (unsigned char*) native_active_data, 12);
                                 } else {
                                     render_shadow(e, e->w, e->h);
                                     XClearWindow(dpy, e->shadow);
@@ -1336,7 +1347,7 @@ int main(int argc, char** argv) {
                             if (e->is_active) {
                                 e->is_active = 0;
                                 if (use_native_shadows) {
-                                    XChangeProperty(dpy, e->toplevel, A_KDE_NET_WM_SHADOW, XA_CARDINAL, 32, PropModeReplace, (unsigned char*) native_inactive_data, 12);
+                                    XChangeProperty(dpy, e->client, A_KDE_NET_WM_SHADOW, XA_CARDINAL, 32, PropModeReplace, (unsigned char*) native_inactive_data, 12);
                                 } else {
                                     render_shadow(e, e->w, e->h);
                                     XClearWindow(dpy, e->shadow);
