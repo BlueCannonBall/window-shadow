@@ -271,31 +271,38 @@ static void generate_native_shadow(float opacity, unsigned long* out_data) {
     if (pt < 0) pt = 0;
     if (pb < 0) pb = 0;
 
-    /* A Gaussian blur must be fed by a source area larger than its blur radius,
-     * otherwise the edges are starved of intensity and the shadow appears too faint.
-     * We simulate an infinitely large window by making the internal drawing box
-     * sufficiently large (radius * 4), then extracting 1-pixel slices from the center! */
+    /* The internal drawing box must be much larger than the blur radius
+     * to prevent edge starvation (faint shadows). */
     int tw = cfg_radius * 4;
     int th = cfg_radius * 4;
     if (tw < 50) tw = 50;
     if (th < 50) th = 50;
-    
+
     int sw = tw + pl + pr;
     int sh = th + pt + pb;
 
+    /* cx0/cy0 is where the window sits in the shadow texture (determined by padding).
+     * The blur source (white box) is shifted by the offset to create a genuine
+     * directional shadow. We do NOT clear the interior — KWin draws the window
+     * on top, so interior pixels are never visible. */
     int cx0 = pl;
     int cy0 = pt;
+    int blur_x = cx0 + cfg_offset_x;
+    int blur_y = cy0 + cfg_offset_y;
 
     int npx = sw * sh;
     unsigned char* alpha = calloc(npx, 1);
     if (!alpha) return;
 
-    for (int y = cy0; y < cy0 + th; y++)
-        for (int x = cx0; x < cx0 + tw; x++)
-            alpha[y * sw + x] = 255;
+    for (int y = blur_y; y < blur_y + th; y++)
+        for (int x = blur_x; x < blur_x + tw; x++)
+            if (x >= 0 && x < sw && y >= 0 && y < sh)
+                alpha[y * sw + x] = 255;
 
     gaussian_blur(alpha, sw, sh, cfg_radius);
 
+    /* Zero out the interior where KWin places the actual window content.
+     * This prevents the shadow from bleeding through semi-transparent windows. */
     for (int y = cy0; y < cy0 + th; y++)
         for (int x = cx0; x < cx0 + tw; x++)
             alpha[y * sw + x] = 0;
@@ -612,7 +619,7 @@ static void stack_shadow_below(ShadowEntry* e) {
     ev.xclient.type = ClientMessage;
     ev.xclient.send_event = True;
     ev.xclient.window = e->shadow;
-    ev.xclient.message_type = XInternAtom(dpy, "_NET_RESTACK_WINDOW", False);
+    ev.xclient.message_type = A_NET_RESTACK_WINDOW;
     ev.xclient.format = 32;
     ev.xclient.data.l[0] = 1;         /* source: 1 (normal app) */
     ev.xclient.data.l[1] = e->client; /* sibling: use client window, not frame! WMs track clients. */
@@ -820,10 +827,12 @@ static void add_shadow(Window toplevel, Window client, int x, int y, int w, int 
         stack_shadow_below(e);
     }
 
-    /* Select StructureNotify on the toplevel for move/resize */
-    XSelectInput(dpy, toplevel, StructureNotifyMask | PropertyChangeMask);
+    /* In native mode, we only need PropertyChangeMask for focus tracking.
+     * StructureNotifyMask is only needed in non-native mode for move/resize. */
+    long mask = PropertyChangeMask | (use_native_shadows ? 0 : StructureNotifyMask);
+    XSelectInput(dpy, toplevel, mask);
     if (client != toplevel)
-        XSelectInput(dpy, client, StructureNotifyMask | PropertyChangeMask);
+        XSelectInput(dpy, client, mask);
 
     e->next = shadow_list;
     shadow_list = e;
@@ -1366,6 +1375,14 @@ int main(int argc, char** argv) {
     printf("window-shadow: exiting\n");
     while (shadow_list)
         remove_shadow(shadow_list);
+
+    /* Free native shadow pixmaps */
+    if (use_native_shadows) {
+        for (int i = 0; i < 8; i++) {
+            if (native_active_data[i]) XFreePixmap(dpy, native_active_data[i]);
+            if (native_inactive_data[i]) XFreePixmap(dpy, native_inactive_data[i]);
+        }
+    }
 
     XFreeColormap(dpy, argb_cmap);
     XCloseDisplay(dpy);
