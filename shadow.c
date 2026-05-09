@@ -853,11 +853,19 @@ static void handle_configure(XConfigureEvent* ev) {
     ShadowEntry* e = find_shadow_for_toplevel(tl);
     if (!e) return;
 
-    /* Get absolute coordinates via XTranslateCoordinates.
-     * This synchronous call implicitly throttles the event loop and fetches the
-     * most up-to-date window dimensions, safely compressing resize events. */
+    /* If this event is for the toplevel wrapper, its coordinates are already absolute
+     * (since its parent is root). We can use them directly to completely eliminate
+     * synchronous X11 round-trips during dragging, unlocking maximum framerate.
+     * We only fall back to synchronous queries if the inner client resized. */
     int ax, ay, aw, ah;
-    get_absolute_geometry(e->toplevel, &ax, &ay, &aw, &ah);
+    if (ev->window == tl) {
+        ax = ev->x;
+        ay = ev->y;
+        aw = ev->width;
+        ah = ev->height;
+    } else {
+        get_absolute_geometry(tl, &ax, &ay, &aw, &ah);
+    }
 
     int resized = (aw != e->w || ah != e->h);
 
