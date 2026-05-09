@@ -334,15 +334,15 @@ static void generate_native_shadow(float opacity, unsigned long* out_data) {
     int slice_cx = cx0 + tw / 2;
     int slice_cy = cy0 + th / 2;
 
-    /* Order: Top, Top-Right, Right, Bottom-Right, Bottom, Bottom-Left, Left, Top-Left */
-    out_data[0] = create_slice(full, slice_cx, 0, 1, pt);             /* Top */
-    out_data[1] = create_slice(full, cx0 + tw, 0, pr, pt);            /* Top-Right */
-    out_data[2] = create_slice(full, cx0 + tw, slice_cy, pr, 1);      /* Right */
-    out_data[3] = create_slice(full, cx0 + tw, cy0 + th, pr, pb);     /* Bottom-Right */
-    out_data[4] = create_slice(full, slice_cx, cy0 + th, 1, pb);      /* Bottom */
-    out_data[5] = create_slice(full, 0, cy0 + th, pl, pb);            /* Bottom-Left */
-    out_data[6] = create_slice(full, 0, slice_cy, pl, 1);             /* Left */
-    out_data[7] = create_slice(full, 0, 0, pl, pt);                   /* Top-Left */
+    /* Order: Top-Left, Top, Top-Right, Right, Bottom-Right, Bottom, Bottom-Left, Left */
+    out_data[0] = create_slice(full, 0, 0, pl, pt);                   /* Top-Left */
+    out_data[1] = create_slice(full, slice_cx, 0, 1, pt);             /* Top */
+    out_data[2] = create_slice(full, cx0 + tw, 0, pr, pt);            /* Top-Right */
+    out_data[3] = create_slice(full, cx0 + tw, slice_cy, pr, 1);      /* Right */
+    out_data[4] = create_slice(full, cx0 + tw, cy0 + th, pr, pb);     /* Bottom-Right */
+    out_data[5] = create_slice(full, slice_cx, cy0 + th, 1, pb);      /* Bottom */
+    out_data[6] = create_slice(full, 0, cy0 + th, pl, pb);            /* Bottom-Left */
+    out_data[7] = create_slice(full, 0, slice_cy, pl, 1);             /* Left */
 
     /* Padding: Top, Right, Bottom, Left */
     out_data[8] = pt;
