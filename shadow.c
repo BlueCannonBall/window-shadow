@@ -48,11 +48,6 @@ typedef struct ShadowEntry {
     int sw, sh;      /* shadow window size */
     int is_active;   /* focus state */
 
-    /* Cache for full, un-clamped shadow surface */
-    cairo_surface_t* full_shadow;
-    uint32_t* full_shadow_data;
-    int last_w, last_h, last_active;
-
     struct ShadowEntry* next;
 } ShadowEntry;
 
@@ -125,6 +120,7 @@ static Atom A_NET_ACTIVE_WINDOW;
 static Atom A_NET_WORKAREA;
 
 static int cfg_debug = 0;
+static int cfg_no_native = 0;
 
 static int cfg_radius = 50;
 static float cfg_opacity = 0.8f;
@@ -244,6 +240,101 @@ static void gaussian_blur(unsigned char* buf, int w, int h, int radius) {
     free(tmp);
 }
 
+/* ── Shadow Templates & 9-Slice Scaling ──────────────────────────── */
+
+static cairo_surface_t* template_active = NULL;
+static cairo_surface_t* template_inactive = NULL;
+static int tpl_pl, tpl_pr, tpl_pt, tpl_pb;
+static int tpl_tw, tpl_th, tpl_cx0, tpl_cy0;
+
+static void cairo_destroy_func(void *data) {
+    free(data);
+}
+
+static cairo_surface_t* generate_shadow_template(float opacity) {
+    tpl_pl = cfg_radius - cfg_offset_x;
+    tpl_pr = cfg_radius + cfg_offset_x;
+    tpl_pt = cfg_radius - cfg_offset_y;
+    tpl_pb = cfg_radius + cfg_offset_y;
+
+    if (tpl_pl < 0) tpl_pl = 0;
+    if (tpl_pr < 0) tpl_pr = 0;
+    if (tpl_pt < 0) tpl_pt = 0;
+    if (tpl_pb < 0) tpl_pb = 0;
+
+    tpl_tw = cfg_radius * 4;
+    tpl_th = cfg_radius * 4;
+    if (tpl_tw < 50) tpl_tw = 50;
+    if (tpl_th < 50) tpl_th = 50;
+
+    int sw = tpl_tw + tpl_pl + tpl_pr;
+    int sh = tpl_th + tpl_pt + tpl_pb;
+
+    tpl_cx0 = tpl_pl;
+    tpl_cy0 = tpl_pt;
+    int blur_x = tpl_cx0 + cfg_offset_x;
+    int blur_y = tpl_cy0 + cfg_offset_y;
+
+    int npx = sw * sh;
+    unsigned char* alpha = calloc(npx, 1);
+    if (!alpha) return NULL;
+
+    for (int y = blur_y; y < blur_y + tpl_th; y++)
+        for (int x = blur_x; x < blur_x + tpl_tw; x++)
+            if (x >= 0 && x < sw && y >= 0 && y < sh)
+                alpha[y * sw + x] = 255;
+
+    gaussian_blur(alpha, sw, sh, cfg_radius);
+
+    for (int y = tpl_cy0; y < tpl_cy0 + tpl_th; y++)
+        for (int x = tpl_cx0; x < tpl_cx0 + tpl_tw; x++)
+            alpha[y * sw + x] = 0;
+
+    uint32_t* argb = calloc(npx, sizeof(uint32_t));
+    if (!argb) { free(alpha); return NULL; }
+
+    uint8_t cr = (uint8_t)(cfg_color_r * 255);
+    uint8_t cg = (uint8_t)(cfg_color_g * 255);
+    uint8_t cb = (uint8_t)(cfg_color_b * 255);
+
+    for (int i = 0; i < npx; i++) {
+        uint8_t a = (uint8_t)(alpha[i] * opacity);
+        uint8_t r = (uint8_t)(cr * a / 255);
+        uint8_t g = (uint8_t)(cg * a / 255);
+        uint8_t b = (uint8_t)(cb * a / 255);
+        argb[i] = ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+    }
+    free(alpha);
+
+    cairo_surface_t* full = cairo_image_surface_create_for_data((unsigned char*)argb, CAIRO_FORMAT_ARGB32, sw, sh, sw * 4);
+    static cairo_user_data_key_t key;
+    cairo_surface_set_user_data(full, &key, argb, cairo_destroy_func);
+
+    if (cfg_outline_width > 0.0f) {
+        cairo_t* cr_ctx = cairo_create(full);
+        cairo_set_operator(cr_ctx, CAIRO_OPERATOR_OVER);
+        cairo_set_source_rgba(cr_ctx, cfg_outline_r, cfg_outline_g, cfg_outline_b, 1.0);
+        cairo_set_line_width(cr_ctx, cfg_outline_width);
+        cairo_rectangle(cr_ctx, tpl_cx0 - (cfg_outline_width / 2.0), tpl_cy0 - (cfg_outline_width / 2.0), tpl_tw + cfg_outline_width, tpl_th + cfg_outline_width);
+        cairo_stroke(cr_ctx);
+        cairo_destroy(cr_ctx);
+    }
+
+    return full;
+}
+
+static void draw_slice(cairo_t* cr, cairo_surface_t* src, double sx, double sy, double sw, double sh, double dx, double dy, double dw, double dh) {
+    if (dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) return;
+    cairo_save(cr);
+    cairo_translate(cr, dx, dy);
+    cairo_scale(cr, dw / sw, dh / sh);
+    cairo_set_source_surface(cr, src, -sx, -sy);
+    cairo_pattern_set_extend(cairo_get_source(cr), CAIRO_EXTEND_PAD);
+    cairo_rectangle(cr, 0, 0, sw, sh);
+    cairo_fill(cr);
+    cairo_restore(cr);
+}
+
 /* ── Native KDE Shadow Generation ────────────────────────────────── */
 
 static Pixmap create_slice(cairo_surface_t* src, int sx, int sy, int w, int h) {
@@ -260,83 +351,12 @@ static Pixmap create_slice(cairo_surface_t* src, int sx, int sy, int w, int h) {
     return pm;
 }
 
-static void generate_native_shadow(float opacity, unsigned long* out_data) {
-    int pl = cfg_radius - cfg_offset_x;
-    int pr = cfg_radius + cfg_offset_x;
-    int pt = cfg_radius - cfg_offset_y;
-    int pb = cfg_radius + cfg_offset_y;
+static void generate_native_shadow(cairo_surface_t* full, unsigned long* out_data) {
+    if (!full) return;
+    int cx0 = tpl_cx0, cy0 = tpl_cy0;
+    int tw = tpl_tw, th = tpl_th;
+    int pt = tpl_pt, pr = tpl_pr, pb = tpl_pb, pl = tpl_pl;
 
-    if (pl < 0) pl = 0;
-    if (pr < 0) pr = 0;
-    if (pt < 0) pt = 0;
-    if (pb < 0) pb = 0;
-
-    /* The internal drawing box must be much larger than the blur radius
-     * to prevent edge starvation (faint shadows). */
-    int tw = cfg_radius * 4;
-    int th = cfg_radius * 4;
-    if (tw < 50) tw = 50;
-    if (th < 50) th = 50;
-
-    int sw = tw + pl + pr;
-    int sh = th + pt + pb;
-
-    /* cx0/cy0 is where the window sits in the shadow texture (determined by padding).
-     * The blur source (white box) is shifted by the offset to create a genuine
-     * directional shadow. We do NOT clear the interior — KWin draws the window
-     * on top, so interior pixels are never visible. */
-    int cx0 = pl;
-    int cy0 = pt;
-    int blur_x = cx0 + cfg_offset_x;
-    int blur_y = cy0 + cfg_offset_y;
-
-    int npx = sw * sh;
-    unsigned char* alpha = calloc(npx, 1);
-    if (!alpha) return;
-
-    for (int y = blur_y; y < blur_y + th; y++)
-        for (int x = blur_x; x < blur_x + tw; x++)
-            if (x >= 0 && x < sw && y >= 0 && y < sh)
-                alpha[y * sw + x] = 255;
-
-    gaussian_blur(alpha, sw, sh, cfg_radius);
-
-    /* Zero out the interior where KWin places the actual window content.
-     * This prevents the shadow from bleeding through semi-transparent windows. */
-    for (int y = cy0; y < cy0 + th; y++)
-        for (int x = cx0; x < cx0 + tw; x++)
-            alpha[y * sw + x] = 0;
-
-    uint32_t* argb = calloc(npx, sizeof(uint32_t));
-    if (!argb) { free(alpha); return; }
-
-    uint8_t cr = (uint8_t)(cfg_color_r * 255);
-    uint8_t cg = (uint8_t)(cfg_color_g * 255);
-    uint8_t cb = (uint8_t)(cfg_color_b * 255);
-
-    for (int i = 0; i < npx; i++) {
-        uint8_t a = (uint8_t)(alpha[i] * opacity);
-        uint8_t r = (uint8_t)(cr * a / 255);
-        uint8_t g = (uint8_t)(cg * a / 255);
-        uint8_t b = (uint8_t)(cb * a / 255);
-        argb[i] = ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
-    }
-    free(alpha);
-
-    cairo_surface_t* full = cairo_image_surface_create_for_data((unsigned char*)argb, CAIRO_FORMAT_ARGB32, sw, sh, sw * 4);
-
-    if (cfg_outline_width > 0.0f) {
-        cairo_t* cr_ctx = cairo_create(full);
-        cairo_set_operator(cr_ctx, CAIRO_OPERATOR_OVER);
-        cairo_set_source_rgba(cr_ctx, cfg_outline_r, cfg_outline_g, cfg_outline_b, 1.0);
-        cairo_set_line_width(cr_ctx, cfg_outline_width);
-        cairo_rectangle(cr_ctx, cx0 - (cfg_outline_width / 2.0), cy0 - (cfg_outline_width / 2.0), tw + cfg_outline_width, th + cfg_outline_width);
-        cairo_stroke(cr_ctx);
-        cairo_destroy(cr_ctx);
-    }
-
-    /* Order matches KWin's ShadowElements enum:
-     * Top, Top-Right, Right, Bottom-Right, Bottom, Bottom-Left, Left, Top-Left */
     out_data[0] = create_slice(full, cx0, 0, tw, pt);                 /* Top */
     out_data[1] = create_slice(full, cx0 + tw, 0, pr, pt);            /* Top-Right */
     out_data[2] = create_slice(full, cx0 + tw, cy0, pr, th);          /* Right */
@@ -346,14 +366,10 @@ static void generate_native_shadow(float opacity, unsigned long* out_data) {
     out_data[6] = create_slice(full, 0, cy0, pl, th);                 /* Left */
     out_data[7] = create_slice(full, 0, 0, pl, pt);                   /* Top-Left */
 
-    /* Padding: Top, Right, Bottom, Left */
     out_data[8] = pt;
     out_data[9] = pr;
     out_data[10] = pb;
     out_data[11] = pl;
-
-    cairo_surface_destroy(full);
-    free(argb);
 }
 
 /* ── Render the shadow into a Pixmap and store it in the entry.
@@ -361,10 +377,10 @@ static void generate_native_shadow(float opacity, unsigned long* out_data) {
  */
 static void render_shadow(ShadowEntry* e, int tw, int th) {
     /* Calculate clamped geometry */
-    int sx = e->x - cfg_radius + cfg_offset_x;
-    int sy = e->y - cfg_radius + cfg_offset_y;
-    int sw = tw + 2 * cfg_radius;
-    int sh = th + 2 * cfg_radius;
+    int sx = e->x - tpl_pl;
+    int sy = e->y - tpl_pt;
+    int sw = tw + tpl_pl + tpl_pr;
+    int sh = th + tpl_pt + tpl_pb;
 
     int actual_x = sx;
     int actual_y = sy;
@@ -403,93 +419,35 @@ static void render_shadow(ShadowEntry* e, int tw, int th) {
     e->sw = actual_w;
     e->sh = actual_h;
 
-    int npx = sw * sh;
-
-    if (e->full_shadow && (e->last_w != tw || e->last_h != th || e->last_active != e->is_active)) {
-        cairo_surface_destroy(e->full_shadow);
-        free(e->full_shadow_data);
-        e->full_shadow = NULL;
-        e->full_shadow_data = NULL;
-    }
-
-    if (!e->full_shadow) {
-        /* Build alpha mask: solid rectangle where the window is */
-        unsigned char* alpha = calloc(npx, 1);
-        if (!alpha) return;
-
-        for (int y = cfg_radius; y < cfg_radius + th; y++)
-            for (int x = cfg_radius; x < cfg_radius + tw; x++)
-                alpha[y * sw + x] = 255;
-
-        gaussian_blur(alpha, sw, sh, cfg_radius);
-
-        int cx0 = cfg_radius - cfg_offset_x;
-        int cy0 = cfg_radius - cfg_offset_y;
-
-        /* Clear the center (alpha=0) where the target window sits */
-        for (int y = cy0; y < cy0 + th; y++)
-            for (int x = cx0; x < cx0 + tw; x++)
-                if (x >= 0 && x < sw && y >= 0 && y < sh)
-                    alpha[y * sw + x] = 0;
-
-        /* Convert to premultiplied ARGB */
-        uint32_t* argb = calloc(npx, sizeof(uint32_t));
-        if (!argb) {
-            free(alpha);
-            return;
-        }
-
-        uint8_t cr = (uint8_t) (cfg_color_r * 255);
-        uint8_t cg = (uint8_t) (cfg_color_g * 255);
-        uint8_t cb = (uint8_t) (cfg_color_b * 255);
-
-        float active_opacity = e->is_active ? cfg_opacity : cfg_inactive_opacity;
-
-        for (int i = 0; i < npx; i++) {
-            uint8_t a = (uint8_t) (alpha[i] * active_opacity);
-            uint8_t r = (uint8_t) (cr * a / 255);
-            uint8_t g = (uint8_t) (cg * a / 255);
-            uint8_t b = (uint8_t) (cb * a / 255);
-
-            argb[i] = ((uint32_t) a << 24) | ((uint32_t) r << 16) | ((uint32_t) g << 8) | (uint32_t) b;
-        }
-
-        free(alpha);
-
-        e->full_shadow_data = argb;
-        e->full_shadow = cairo_image_surface_create_for_data(
-            (unsigned char*) argb, CAIRO_FORMAT_ARGB32, sw, sh, sw * 4);
-
-        e->last_w = tw;
-        e->last_h = th;
-        e->last_active = e->is_active;
-    }
-
     if (e->pixmap) XFreePixmap(dpy, e->pixmap);
     e->pixmap = XCreatePixmap(dpy, e->shadow, actual_w, actual_h, 32);
 
     cairo_surface_t* xsurf = cairo_xlib_surface_create(
         dpy, e->pixmap, argb_visual, actual_w, actual_h);
     cairo_t* cr2 = cairo_create(xsurf);
-    cairo_set_source_surface(cr2, e->full_shadow, -render_offset_x, -render_offset_y);
+
+    /* Clear with transparent */
     cairo_set_operator(cr2, CAIRO_OPERATOR_SOURCE);
+    cairo_set_source_rgba(cr2, 0, 0, 0, 0);
     cairo_paint(cr2);
 
-    int cx0 = cfg_radius - cfg_offset_x;
-    int cy0 = cfg_radius - cfg_offset_y;
+    cairo_set_operator(cr2, CAIRO_OPERATOR_OVER);
+    cairo_translate(cr2, -render_offset_x, -render_offset_y);
 
-    if (cfg_outline_width > 0.0f) {
-        /* Draw a solid outline */
-        cairo_set_operator(cr2, CAIRO_OPERATOR_OVER);
-        cairo_set_source_rgba(cr2, cfg_outline_r, cfg_outline_g, cfg_outline_b, 1.0);
-        cairo_set_line_width(cr2, cfg_outline_width);
+    cairo_surface_t* tpl = e->is_active ? template_active : template_inactive;
 
-        cairo_rectangle(cr2,
-            (cx0 - render_offset_x) - (cfg_outline_width / 2.0),
-            (cy0 - render_offset_y) - (cfg_outline_width / 2.0),
-            tw + cfg_outline_width,
-            th + cfg_outline_width);
-        cairo_stroke(cr2);
+    if (tpl) {
+        /* Corners */
+        draw_slice(cr2, tpl, 0, 0, tpl_pl, tpl_pt, 0, 0, tpl_pl, tpl_pt); /* Top-Left */
+        draw_slice(cr2, tpl, tpl_cx0 + tpl_tw, 0, tpl_pr, tpl_pt, tpl_pl + tw, 0, tpl_pr, tpl_pt); /* Top-Right */
+        draw_slice(cr2, tpl, 0, tpl_cy0 + tpl_th, tpl_pl, tpl_pb, 0, tpl_pt + th, tpl_pl, tpl_pb); /* Bottom-Left */
+        draw_slice(cr2, tpl, tpl_cx0 + tpl_tw, tpl_cy0 + tpl_th, tpl_pr, tpl_pb, tpl_pl + tw, tpl_pt + th, tpl_pr, tpl_pb); /* Bottom-Right */
+
+        /* Edges */
+        draw_slice(cr2, tpl, tpl_cx0, 0, tpl_tw, tpl_pt, tpl_pl, 0, tw, tpl_pt); /* Top */
+        draw_slice(cr2, tpl, tpl_cx0, tpl_cy0 + tpl_th, tpl_tw, tpl_pb, tpl_pl, tpl_pt + th, tw, tpl_pb); /* Bottom */
+        draw_slice(cr2, tpl, 0, tpl_cy0, tpl_pl, tpl_th, 0, tpl_pt, tpl_pl, th); /* Left */
+        draw_slice(cr2, tpl, tpl_cx0 + tpl_tw, tpl_cy0, tpl_pr, tpl_th, tpl_pl + tw, tpl_pt, tpl_pr, th); /* Right */
     }
 
     cairo_destroy(cr2);
@@ -504,8 +462,8 @@ static void render_shadow(ShadowEntry* e, int tw, int th) {
      * We must apply the render_offset_x/y to the XShape rectangles too.
      */
     XRectangle rects[4];
-    int mask_cx0 = cx0 - render_offset_x;
-    int mask_cy0 = cy0 - render_offset_y;
+    int mask_cx0 = tpl_pl - render_offset_x;
+    int mask_cy0 = tpl_pt - render_offset_y;
     int clamp_cx0 = mask_cx0 < 0 ? 0 : mask_cx0;
     int clamp_cy0 = mask_cy0 < 0 ? 0 : mask_cy0;
     int clamp_cx1 = (mask_cx0 + tw > actual_w) ? actual_w : mask_cx0 + tw;
@@ -789,8 +747,6 @@ static void remove_shadow(ShadowEntry* target) {
             if (use_native_shadows) {
                 XDeleteProperty(dpy, target->client, A_KDE_NET_WM_SHADOW);
             } else {
-                if (target->full_shadow) cairo_surface_destroy(target->full_shadow);
-                if (target->full_shadow_data) free(target->full_shadow_data);
                 if (target->pixmap) XFreePixmap(dpy, target->pixmap);
                 XDestroyWindow(dpy, target->shadow);
             }
@@ -1152,6 +1108,7 @@ static void usage(const char* prog) {
         "  --color RRGGBB  Shadow color in hex           (default: 000000)\n"
         "  --outline-width F Outline width in pixels     (default: 1.0)\n"
         "  --outline-color RRGGBB Outline color in hex   (default: 4c4c4c)\n"
+        "  --force-non-kde Disable native KDE shadows    (default: off)\n"
         "  --help          Show this help\n",
         prog);
 }
@@ -1174,12 +1131,13 @@ static void parse_args(int argc, char** argv) {
         {"color", required_argument, NULL, 'c'},
         {"outline-width", required_argument, NULL, 'w'},
         {"outline-color", required_argument, NULL, 'C'},
+        {"force-non-kde", no_argument, NULL, 'n'},
         {"debug", no_argument, NULL, 'd'},
         {"help", no_argument, NULL, 'h'},
         {NULL, 0, NULL, 0}};
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "r:o:x:y:c:dh", longopts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "r:o:x:y:c:w:C:ndh", longopts, NULL)) != -1) {
         switch (opt) {
         case 'r': cfg_radius = atoi(optarg); break;
         case 'o': cfg_opacity = atof(optarg); break;
@@ -1198,6 +1156,7 @@ static void parse_args(int argc, char** argv) {
                 exit(1);
             }
             break;
+        case 'n': cfg_no_native = 1; break;
         case 'd': cfg_debug = 1; break;
         case 'h': usage(argv[0]); exit(0);
         default: usage(argv[0]); exit(1);
@@ -1259,24 +1218,29 @@ int main(int argc, char** argv) {
     A_KDE_NET_WM_SHADOW = XInternAtom(dpy, "_KDE_NET_WM_SHADOW", False);
 
     /* Detect Native KWin Shadow Support */
-    unsigned long sup_nitems = 0;
-    unsigned char* sup_data = get_prop(root, XInternAtom(dpy, "_NET_SUPPORTED", False), XA_ATOM, NULL, &sup_nitems);
-    if (sup_data && sup_nitems > 0) {
-        Atom* atoms = (Atom*) sup_data;
-        for (unsigned long i = 0; i < sup_nitems; i++) {
-            if (atoms[i] == A_KDE_NET_WM_SHADOW) {
-                use_native_shadows = 1;
-                break;
+    if (!cfg_no_native) {
+        unsigned long sup_nitems = 0;
+        unsigned char* sup_data = get_prop(root, XInternAtom(dpy, "_NET_SUPPORTED", False), XA_ATOM, NULL, &sup_nitems);
+        if (sup_data && sup_nitems > 0) {
+            Atom* atoms = (Atom*) sup_data;
+            for (unsigned long i = 0; i < sup_nitems; i++) {
+                if (atoms[i] == A_KDE_NET_WM_SHADOW) {
+                    use_native_shadows = 1;
+                    break;
+                }
             }
+            XFree(sup_data);
+        } else if (sup_data) {
+            XFree(sup_data);
         }
-        XFree(sup_data);
-    } else if (sup_data) {
-        XFree(sup_data);
     }
 
+    template_active = generate_shadow_template(cfg_opacity);
+    template_inactive = generate_shadow_template(cfg_inactive_opacity);
+
     if (use_native_shadows) {
-        generate_native_shadow(cfg_opacity, native_active_data);
-        generate_native_shadow(cfg_inactive_opacity, native_inactive_data);
+        generate_native_shadow(template_active, native_active_data);
+        generate_native_shadow(template_inactive, native_inactive_data);
     }
 
     /* Initialize workarea cache */
@@ -1383,6 +1347,9 @@ int main(int argc, char** argv) {
             if (native_inactive_data[i]) XFreePixmap(dpy, native_inactive_data[i]);
         }
     }
+
+    if (template_active) cairo_surface_destroy(template_active);
+    if (template_inactive) cairo_surface_destroy(template_inactive);
 
     XFreeColormap(dpy, argb_cmap);
     XCloseDisplay(dpy);

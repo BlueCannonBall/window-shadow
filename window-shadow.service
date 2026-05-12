@@ -1,16 +1,15 @@
 [Unit]
 Description=X11 Window Shadow Daemon
-After=x11-common.service graphical-session.target
-PartOf=graphical-session.target
+After=graphical-session.target
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/window-shadow
-Restart=on-failure
-RestartSec=2
+Restart=always
+RestartSec=5
 # In a user session, DISPLAY and XAUTHORITY are usually already set,
 # but we provide a fallback just in case.
 Environment=DISPLAY=:0
 
 [Install]
-WantedBy=graphical-session.target
+WantedBy=default.target
