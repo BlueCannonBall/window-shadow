@@ -100,7 +100,3 @@ A window is considered CSD (needing a shadow) if:
    would indicate the app renders its own shadow (e.g., GNOME apps)
 4. It is not an override-redirect window (popups, tooltips, menus)
 5. It is not maximized, fullscreen, or hidden (shadows are hidden in these states)
-
-## License
-
-Public domain / unlicense. Do whatever you want with it.
